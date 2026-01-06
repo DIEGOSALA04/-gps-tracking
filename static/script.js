@@ -468,6 +468,12 @@ async function handleAddDevice(e) {
                     updateStats(allDevices);
                 }
             }, 200);
+            
+            // Si el vehículo tiene número de SIM, iniciar automáticamente el servicio de actualización
+            if (placa_gps && placa_gps.trim() !== '') {
+                await startAutoUpdateIfNotRunning();
+            }
+            
             showNotification('Vehículo Agregado', `Se agregó ${deviceName} correctamente`, 'success');
         } else {
             showError(result.error || 'Error al agregar el vehículo');
@@ -858,6 +864,131 @@ function showNotification(title, message, type = 'info') {
 if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
 }
+
+// Variable para el intervalo de estado del servicio de actualización automática
+let autoUpdateStatusInterval = null;
+
+// Función para iniciar automáticamente el servicio si no está corriendo
+async function startAutoUpdateIfNotRunning() {
+    try {
+        // Verificar estado actual
+        const statusResponse = await fetch('/api/auto-update/status');
+        const status = await statusResponse.json();
+        
+        // Si no está corriendo, iniciarlo
+        if (!status.is_running) {
+            const startResponse = await fetch('/api/auto-update/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            
+            const result = await startResponse.json();
+            
+            if (startResponse.ok && result.status === 'started') {
+                console.log('✅ Servicio de actualización automática iniciado automáticamente');
+                showNotification('Actualización Automática', 'El servicio se inició automáticamente. Enviando SMS cada 10 segundos a todos los vehículos con número de SIM.', 'success');
+            } else {
+                console.log('⚠️ No se pudo iniciar el servicio automáticamente:', result.message);
+            }
+        } else {
+            console.log('✅ El servicio de actualización automática ya está corriendo');
+        }
+    } catch (error) {
+        console.error('Error al verificar/iniciar servicio de actualización:', error);
+    }
+}
+
+// Funciones para controlar el servicio de actualización automática (si hay panel de control)
+async function startAutoUpdate() {
+    try {
+        const response = await fetch('/api/auto-update/start', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.status === 'started') {
+            showSuccess('Actualización automática iniciada');
+            // Actualizar estado cada 2 segundos
+            if (autoUpdateStatusInterval) {
+                clearInterval(autoUpdateStatusInterval);
+            }
+            autoUpdateStatusInterval = setInterval(checkAutoUpdateStatus, 2000);
+        } else {
+            showError(result.message || 'Error al iniciar actualización automática');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showError('Error al iniciar actualización automática');
+    }
+}
+
+async function stopAutoUpdate() {
+    try {
+        const response = await fetch('/api/auto-update/stop', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+            showSuccess('Actualización automática detenida');
+            if (autoUpdateStatusInterval) {
+                clearInterval(autoUpdateStatusInterval);
+                autoUpdateStatusInterval = null;
+            }
+        } else {
+            showError(result.message || 'Error al detener actualización automática');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        showError('Error al detener actualización automática');
+    }
+}
+
+async function checkAutoUpdateStatus() {
+    try {
+        const response = await fetch('/api/auto-update/status');
+        const status = await response.json();
+        
+        if (response.ok) {
+            // Actualizar UI si existe el panel de control
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            if (statusDot && statusText) {
+                if (status.is_running) {
+                    statusDot.style.backgroundColor = '#10b981';
+                    statusText.textContent = 'Activo';
+                } else {
+                    statusDot.style.backgroundColor = '#ef4444';
+                    statusText.textContent = 'Detenido';
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error al verificar estado:', error);
+    }
+}
+
+// Iniciar automáticamente el servicio cuando hay vehículos con número de SIM al cargar la página
+setTimeout(async () => {
+    if (allDevices && allDevices.length > 0) {
+        const devicesWithSim = allDevices.filter(d => d.placa_gps && d.placa_gps.trim() !== '');
+        if (devicesWithSim.length > 0) {
+            console.log(`Encontrados ${devicesWithSim.length} vehículos con número de SIM. Iniciando servicio automático...`);
+            await startAutoUpdateIfNotRunning();
+        }
+    }
+}, 3000);
+
 
 
 
