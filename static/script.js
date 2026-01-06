@@ -9,8 +9,12 @@ let currentRentalDeviceId = null;
 
 // Inicializar cuando el DOM esté listo
 document.addEventListener('DOMContentLoaded', function() {
+    // Inicializar mapa primero y esperar a que esté listo
     initializeMap();
-    loadDevices();
+    // Esperar a que el mapa esté completamente inicializado antes de cargar dispositivos
+    setTimeout(() => {
+        loadDevices();
+    }, 500);
     registerServiceWorker();
     
     // Event listeners
@@ -83,6 +87,13 @@ function registerServiceWorker() {
 }
 
 function initializeMap() {
+    // Verificar que el contenedor del mapa exista
+    const mapContainer = document.getElementById('map');
+    if (!mapContainer) {
+        console.error('Contenedor del mapa no encontrado');
+        return;
+    }
+    
     // Inicializar mapa centrado en Bucaramanga, Colombia
     map = L.map('map').setView([7.1254, -73.1198], 13);
     
@@ -91,6 +102,11 @@ function initializeMap() {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19
     }).addTo(map);
+    
+    // Esperar a que el mapa esté completamente listo
+    map.whenReady(function() {
+        console.log('Mapa inicializado correctamente');
+    });
 }
 
 async function loadDevices() {
@@ -365,8 +381,23 @@ function getTimeRemaining(endDate) {
 }
 
 function updateMap(devices) {
+    // Verificar que el mapa esté inicializado
+    if (!map) {
+        console.error('Mapa no inicializado, esperando...');
+        setTimeout(() => {
+            if (map) {
+                updateMap(devices);
+            }
+        }, 500);
+        return;
+    }
+    
     // Limpiar marcadores existentes
-    Object.values(markers).forEach(marker => map.removeLayer(marker));
+    Object.values(markers).forEach(marker => {
+        if (marker && map.hasLayer(marker)) {
+            map.removeLayer(marker);
+        }
+    });
     markers = {};
     
     // Agregar marcadores para cada dispositivo con ubicación
@@ -381,7 +412,12 @@ function updateMap(devices) {
                     html: '<div style="background-color: #4CAF50; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 0 10px rgba(76, 175, 80, 0.8);"></div>',
                     iconSize: [20, 20],
                     iconAnchor: [10, 10]
-                }) : null;
+                }) : L.icon({
+                    iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png',
+                    iconSize: [25, 41],
+                    iconAnchor: [12, 41],
+                    popupAnchor: [1, -34]
+                });
             
             const marker = L.marker([device.latitude, device.longitude], { icon: icon })
                 .addTo(map)
@@ -469,10 +505,10 @@ async function handleAddDevice(e) {
                 }
             }, 200);
             
-            // Si el vehículo tiene número de SIM, iniciar automáticamente el servicio de actualización
-            if (placa_gps && placa_gps.trim() !== '') {
-                await startAutoUpdateIfNotRunning();
-            }
+            // Servicio automático desactivado - solo envío manual
+            // if (placa_gps && placa_gps.trim() !== '') {
+            //     await startAutoUpdateIfNotRunning();
+            // }
             
             showNotification('Vehículo Agregado', `Se agregó ${deviceName} correctamente`, 'success');
         } else {
@@ -522,7 +558,25 @@ async function requestLocation(deviceId) {
                 loadDevices();
             }, 5000);
         } else {
-            showError(result.error || 'Error al enviar SMS');
+            const errorMsg = result.error || 'Error al enviar SMS';
+            console.error('Error al enviar SMS:', result);
+            
+            // Si se alcanzó el límite diario, detener el servicio automático
+            if (errorMsg.includes('límite') || errorMsg.includes('limit') || errorMsg.includes('429')) {
+                showError('Límite diario de SMS alcanzado (50 SMS/día). El servicio automático se detuvo.');
+                showNotification('Límite Alcanzado', 'Se alcanzó el límite de 50 SMS/día. El servicio automático se detuvo. Espera 24 horas o detén el servicio manualmente.', 'error');
+                
+                // Detener el servicio automático
+                try {
+                    await fetch('/api/auto-update/stop', { method: 'POST' });
+                    console.log('Servicio automático detenido debido al límite');
+                } catch (e) {
+                    console.error('Error al detener servicio:', e);
+                }
+            } else {
+                showError(errorMsg);
+                showNotification('Error al Enviar SMS', errorMsg, 'error');
+            }
         }
     } catch (error) {
         console.error('Error:', error);
@@ -978,16 +1032,16 @@ async function checkAutoUpdateStatus() {
     }
 }
 
-// Iniciar automáticamente el servicio cuando hay vehículos con número de SIM al cargar la página
-setTimeout(async () => {
-    if (allDevices && allDevices.length > 0) {
-        const devicesWithSim = allDevices.filter(d => d.placa_gps && d.placa_gps.trim() !== '');
-        if (devicesWithSim.length > 0) {
-            console.log(`Encontrados ${devicesWithSim.length} vehículos con número de SIM. Iniciando servicio automático...`);
-            await startAutoUpdateIfNotRunning();
-        }
-    }
-}, 3000);
+// Servicio automático desactivado - solo envío manual para evitar gastar los 50 SMS gratis
+// setTimeout(async () => {
+//     if (allDevices && allDevices.length > 0) {
+//         const devicesWithSim = allDevices.filter(d => d.placa_gps && d.placa_gps.trim() !== '');
+//         if (devicesWithSim.length > 0) {
+//             console.log(`Encontrados ${devicesWithSim.length} vehículos con número de SIM. Iniciando servicio automático...`);
+//             await startAutoUpdateIfNotRunning();
+//         }
+//     }
+// }, 3000);
 
 
 
