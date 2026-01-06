@@ -460,7 +460,15 @@ async function handleAddDevice(e) {
             showSuccess('✅ Vehículo agregado correctamente');
             document.getElementById('deviceForm').reset();
             document.getElementById('deviceName').focus();
-            loadDevices();
+            // Recargar dispositivos y forzar actualización de estadísticas
+            await loadDevices();
+            // Esperar un momento y verificar que las estadísticas se actualizaron
+            setTimeout(() => {
+                if (allDevices && allDevices.length > 0) {
+                    updateStats(allDevices);
+                }
+            }, 200);
+            showNotification('Vehículo Agregado', `Se agregó ${deviceName} correctamente`, 'success');
         } else {
             showError(result.error || 'Error al agregar el vehículo');
         }
@@ -758,16 +766,25 @@ async function endRental(deviceId) {
         return;
     }
     
+    console.log('Finalizando alquiler para dispositivo:', deviceId);
+    
     try {
-        const response = await fetch(`/api/devices/${deviceId}/rental`, {
-            method: 'DELETE'
+        const response = await fetch(`/api/devices/${deviceId}/end-rental`, {
+            method: 'POST'
         });
         
         const result = await response.json();
         
         if (response.ok) {
             showSuccess('✅ Alquiler finalizado correctamente');
+            // Recargar dispositivos y forzar actualización de estadísticas
             await loadDevices();
+            // Esperar un momento y verificar que las estadísticas se actualizaron
+            setTimeout(() => {
+                if (allDevices && allDevices.length > 0) {
+                    updateStats(allDevices);
+                }
+            }, 200);
             showNotification('Alquiler Finalizado', 'El vehículo está disponible nuevamente', 'success');
         } else {
             showError(result.error || 'Error al finalizar el alquiler');
@@ -841,4 +858,6 @@ function showNotification(title, message, type = 'info') {
 if ('Notification' in window && Notification.permission === 'default') {
     Notification.requestPermission();
 }
+
+
 
