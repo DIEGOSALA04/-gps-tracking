@@ -5,6 +5,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import os
+import time
 from dotenv import load_dotenv
 
 # Importar el procesador de SMS
@@ -28,6 +29,14 @@ try:
 except ImportError:
     AutoUpdateService = None
     print("Advertencia: auto_update_service no disponible")
+
+# Importar SMS gratis (módem GSM o Android)
+try:
+    from sms_sender_free import FreeSMSSender, create_sms_sender
+    FREE_SMS_AVAILABLE = True
+except ImportError:
+    FREE_SMS_AVAILABLE = False
+    print("Advertencia: SMS gratis no está disponible (instala pyserial para módem GSM)")
 
 load_dotenv()
 
@@ -358,19 +367,6 @@ def request_location(device_id):
         if not device.placa_gps:
             return jsonify({'error': 'El dispositivo no tiene número de SIM configurado'}), 400
         
-        if not TWILIO_AVAILABLE:
-            return jsonify({'error': 'Twilio no está configurado'}), 500
-        
-        # Configurar Twilio
-        account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-        auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
-        
-        if not account_sid or not auth_token or not twilio_phone:
-            return jsonify({'error': 'Credenciales de Twilio no configuradas'}), 500
-        
-        client = Client(account_sid, auth_token)
-        
         # Formatear número de teléfono
         to_number = device.placa_gps.strip()
         if not to_number.startswith('+'):
@@ -382,32 +378,114 @@ def request_location(device_id):
             else:
                 to_number = f'+{to_number}'
         
-        # Enviar SMS
+        # Obtener mensaje
         data = request.get_json()
         message = data.get('message', 'LOC') if data else 'LOC'
         
+        # Intentar usar SMS gratis primero (módem GSM o Android)
+        sms_sent = False
+        sms_method = None
+        
+        if FREE_SMS_AVAILABLE:
+            try:
+                sms_method_env = os.getenv('SMS_METHOD', 'auto')
+                free_sender = create_sms_sender(method=sms_method_env)
+                if free_sender and free_sender.is_available():
+                    result = free_sender.send_sms(to_number, message)
+                    if result.get('success'):
+                        sms_sent = True
+                        sms_method = result.get('method', 'free')
+                        app.logger.info(f"SMS enviado usando método gratis ({sms_method}) a {device.name} ({to_number})")
+                        return jsonify({
+                            'message': f'SMS enviado exitosamente a {device.name} (método: {sms_method})',
+                            'message_sid': f"free_{sms_method}_{int(time.time())}",
+                            'to': to_number,
+                            'method': sms_method,
+                            'status': 'success'
+                        }), 200
+            except Exception as e:
+                app.logger.warning(f"Error con método gratis: {e}, intentando Twilio...")
+                import traceback
+                app.logger.debug(traceback.format_exc())
+        
+        # Usar Twilio como respaldo
+        if not TWILIO_AVAILABLE:
+            return jsonify({
+                'error': 'No hay método de envío de SMS disponible. Configura un módem GSM, Android, o Twilio.',
+                'status': 'error'
+            }), 500
+        
+        # Configurar Twilio
+        account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+        auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+        twilio_phone = os.getenv('TWILIO_PHONE_NUMBER')
+        
+        if not account_sid or not auth_token:
+            return jsonify({
+                'error': 'Twilio no está configurado. Configura TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN, o usa un módem GSM/Android.',
+                'status': 'error'
+            }), 500
+        
         try:
+            client = Client(account_sid, auth_token)
+        except Exception as e:
+            return jsonify({'error': f'Error al inicializar cliente de Twilio: {str(e)}'}), 500
+        
+        try:
+            app.logger.info(f"Intentando enviar SMS vía Twilio desde {twilio_phone} a {to_number}")
             message_obj = client.messages.create(
                 body=message,
                 from_=twilio_phone,
                 to=to_number
             )
             
+            app.logger.info(f"SMS enviado exitosamente vía Twilio. SID: {message_obj.sid}")
+            
             return jsonify({
-                'message': f'SMS enviado exitosamente a {device.name}',
+                'message': f'SMS enviado exitosamente a {device.name} (método: Twilio)',
                 'message_sid': message_obj.sid,
                 'to': to_number,
+                'method': 'twilio',
                 'status': 'success'
             }), 200
         except Exception as e:
+            error_msg = str(e)
+            import traceback
+            error_trace = traceback.format_exc()
+            app.logger.error(f"Error al enviar SMS vía Twilio: {error_msg}")
+            app.logger.error(f"Traceback: {error_trace}")
+            
+            # Detectar errores comunes de Twilio
+            if "not a valid phone number" in error_msg.lower():
+                error_msg = f"Número de teléfono inválido: {to_number}. Verifica el formato."
+            elif "unverified" in error_msg.lower() or "verified" in error_msg.lower():
+                error_msg = f"El número {to_number} no está verificado en Twilio. Verifícalo en la consola de Twilio."
+            elif "insufficient" in error_msg.lower() or "balance" in error_msg.lower():
+                error_msg = "Crédito insuficiente en tu cuenta de Twilio. Recarga tu cuenta."
+            
             return jsonify({
-                'error': f'Error al enviar SMS: {str(e)}',
-                'status': 'error'
+                'error': f'Error al enviar SMS: {error_msg}',
+                'status': 'error',
+                'details': {
+                    'from': twilio_phone,
+                    'to': to_number,
+                    'message': message,
+                    'traceback': error_trace if app.debug else None
+                }
             }), 500
             
     except Exception as e:
+        error_msg = str(e)
+        import traceback
+        error_trace = traceback.format_exc()
+        app.logger.error(f"Error en request_location: {error_msg}")
+        app.logger.error(f"Traceback completo: {error_trace}")
         session.rollback()
-        return jsonify({'error': str(e), 'status': 'error'}), 500
+        return jsonify({
+            'error': f'Error interno: {error_msg}',
+            'status': 'error',
+            'traceback': error_trace if app.debug else None
+        }), 500
     finally:
         session.close()
 
@@ -466,4 +544,5 @@ def set_auto_update_interval():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
 
