@@ -1,0 +1,37 @@
+{
+  "name": "GPS Tracking System",
+  "short_name": "GPS Tracker",
+  "description": "Sistema profesional de gestión y monitoreo GPS en tiempo real",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "prefer_related_applications": false,
+  "categories": ["navigation", "productivity", "utilities"],
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Agregar Dispositivo",
+      "short_name": "Nuevo",
+      "description": "Agregar un nuevo dispositivo GPS",
+      "url": "/?action=add",
+      "icons": [{ "src": "/static/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
+

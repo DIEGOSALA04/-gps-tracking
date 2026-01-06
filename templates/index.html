@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Sistema profesional de gestión y monitoreo GPS en tiempo real">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="GPS Tracker">
+    <meta name="mobile-web-app-capable" content="yes">
+    
+    <title>Sistema de Alquiler de Vehículos Eléctricos | GPS Tracker</title>
+    <meta name="theme-color" content="#0f172a">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icon-192.png') }}">
+    <link rel="apple-touch-icon" sizes="192x192" href="{{ url_for('static', filename='icon-192.png') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-logo">
+                        <img src="{{ url_for('static', filename='SISTEL_sin_fondo (1).png') }}" alt="SISTEL TELECOMUNICACIONES" class="logo-img">
+                    </div>
+                    <div class="header-text">
+                        <h1>Alquiler de Vehículos Eléctricos</h1>
+                        <p>Sistema de gestión y monitoreo GPS en tiempo real</p>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="header-stats">
+                        <div class="stat-item">
+                            <span class="stat-value" id="totalDevices">0</span>
+                            <span class="stat-label">Vehículos</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="activeDevices">0</span>
+                            <span class="stat-label">Activos</span>
+                        </div>
+                    </div>
+                    <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Menú">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <!-- Panel lateral para agregar dispositivos -->
+            <aside class="sidebar" id="sidebar">
+                <!-- Formulario de nuevo vehículo - SCROLLEABLE -->
+                <div class="card form-card">
+                    <div class="card-header">
+                        <h2>➕ Nuevo Vehículo</h2>
+                    </div>
+                    <div class="form-scroll-container">
+                        <form id="deviceForm" class="scrollable-form">
+                            <div class="form-group">
+                                <label for="deviceName">Nombre del Vehículo *</label>
+                                <input type="text" id="deviceName" name="name" required 
+                                       placeholder="Ej: Carro Rojo" 
+                                       autofocus>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="placa_gps">Número de SIM Card *</label>
+                                <input type="text" id="placa_gps" name="placa_gps" required 
+                                       placeholder="Ej: 3001234567 (número de la SIM)">
+                                <small style="color: var(--text-tertiary); font-size: 0.75rem; display: block; margin-top: 4px;">
+                                    Número de teléfono de la SIM card que está en la placa GPS
+                                </small>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="color">Color del Vehículo</label>
+                                <select id="color" name="color">
+                                    <option value="">Selecciona un color</option>
+                                    <option value="Rojo">Rojo</option>
+                                    <option value="Azul">Azul</option>
+                                    <option value="Verde">Verde</option>
+                                    <option value="Amarillo">Amarillo</option>
+                                    <option value="Negro">Negro</option>
+                                    <option value="Blanco">Blanco</option>
+                                    <option value="Rosa">Rosa</option>
+                                    <option value="Naranja">Naranja</option>
+                                    <option value="Morado">Morado</option>
+                                </select>
+                            </div>
+                            
+                            <button type="submit" class="btn btn-primary">
+                                ✓ Agregar Vehículo
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Vehículos en Alquiler - SCROLLEABLE -->
+                <div class="card rented-card" id="rentedCard" style="display: none;">
+                    <div class="card-header rented-header">
+                        <h2>⏰ En Alquiler (<span id="rentedCountBadge">0</span>)</h2>
+                    </div>
+                    <div class="devices-scroll-container">
+                        <div id="rentedDevicesList" class="devices-list">
+                            <!-- Los vehículos alquilados aparecerán aquí -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Lista de dispositivos disponibles - SCROLLEABLE -->
+                <div class="card devices-card">
+                    <div class="card-header">
+                        <h2>🚙 Disponibles (<span id="availableCountBadge">0</span>)</h2>
+                    </div>
+                    <div class="devices-scroll-container">
+                        <div id="devicesList" class="devices-list">
+                            <p class="loading">Cargando...</p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+            
+            <!-- Overlay para móvil -->
+            <div class="mobile-overlay" id="mobileOverlay"></div>
+
+            <!-- Mapa -->
+            <main class="map-container">
+                <div id="map" class="map"></div>
+                <div id="trackingStatus" class="tracking-status" style="display: none;">
+                    <span class="status-indicator">🟢</span>
+                    <span class="status-text">Siguiendo en tiempo real</span>
+                </div>
+                <div class="map-controls">
+                    <button id="refreshBtn" class="btn btn-secondary">🔄 Actualizar</button>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Modal de Alquiler -->
+    <div id="rentalModal" class="rental-modal">
+        <div class="rental-modal-content">
+            <h3>⏰ Configurar Tiempo de Alquiler</h3>
+            <form id="rentalForm">
+                <div class="form-group">
+                    <label for="rentalHours">
+                        <span class="label-icon">⏱️</span>
+                        Duración del Alquiler (horas)
+                    </label>
+                    <input type="number" id="rentalHours" name="duration_hours" 
+                           min="1" max="24" value="1" required
+                           placeholder="Ej: 1, 2, 3... (solo el número)">
+                    <small style="color: var(--text-tertiary); font-size: 0.75rem; display: block; margin-top: 4px;">
+                        Escribe solo el número de horas (ej: 1 para una hora, 2 para dos horas)
+                    </small>
+                </div>
+                <div class="device-actions">
+                    <button type="submit" class="btn btn-primary">
+                        <span class="btn-icon">✓</span>
+                        <span>Iniciar Alquiler</span>
+                    </button>
+                    <button type="button" class="btn btn-danger" onclick="closeRentalModal()">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
+
