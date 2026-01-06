@@ -35,7 +35,13 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuración de base de datos
+# En Render, usar disco persistente si está disponible, sino usar directorio temporal
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:///gps_devices.db')
+# Si estamos en Render y no hay DATABASE_URL configurado, usar directorio persistente
+if 'RENDER' in os.environ and not os.getenv('DATABASE_URL'):
+    # En Render, intentar usar /tmp que es persistente entre reinicios
+    db_path = '/tmp/gps_devices.db'
+    DATABASE_URL = f'sqlite:///{db_path}'
 engine = create_engine(DATABASE_URL, echo=False)
 Base = declarative_base()
 Session = sessionmaker(bind=engine)
