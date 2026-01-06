@@ -113,13 +113,28 @@ async function loadDevices() {
 function updateStats(devices) {
     const totalDevices = devices.length;
     const activeDevices = devices.filter(d => d.latitude && d.longitude).length;
-    const rentedDevices = devices.filter(d => d.is_rented).length;
+    
+    // Filtrar vehículos alquilados correctamente (manejar boolean y números)
+    const rentedDevices = devices.filter(d => {
+        return d.is_rented === true || d.is_rented === 1 || d.is_rented === 'true' || d.is_rented === '1';
+    }).length;
+    
     const availableDevices = totalDevices - rentedDevices;
     
-    document.getElementById('totalDevices').textContent = totalDevices;
-    document.getElementById('activeDevices').textContent = activeDevices;
-    document.getElementById('rentedCountBadge').textContent = rentedDevices;
-    document.getElementById('availableCountBadge').textContent = availableDevices;
+    console.log('=== UPDATE STATS ===');
+    console.log('Total dispositivos:', totalDevices);
+    console.log('Vehículos alquilados:', rentedDevices);
+    console.log('Vehículos disponibles:', availableDevices);
+    
+    const totalDevicesEl = document.getElementById('totalDevices');
+    const activeDevicesEl = document.getElementById('activeDevices');
+    const rentedCountBadgeEl = document.getElementById('rentedCountBadge');
+    const availableCountBadgeEl = document.getElementById('availableCountBadge');
+    
+    if (totalDevicesEl) totalDevicesEl.textContent = totalDevices;
+    if (activeDevicesEl) activeDevicesEl.textContent = activeDevices;
+    if (rentedCountBadgeEl) rentedCountBadgeEl.textContent = rentedDevices;
+    if (availableCountBadgeEl) availableCountBadgeEl.textContent = availableDevices;
     
     // Mostrar/ocultar sección de alquilados
     const rentedCard = document.getElementById('rentedCard');
@@ -135,9 +150,14 @@ function updateStats(devices) {
 function displayDevices(devices) {
     allDevices = devices;
     
-    // Separar vehículos alquilados y disponibles
-    const rentedDevices = devices.filter(d => d.is_rented === true || d.is_rented === 1);
-    const availableDevices = devices.filter(d => !d.is_rented || d.is_rented === false || d.is_rented === 0);
+    // Separar vehículos alquilados y disponibles (manejar diferentes formatos de boolean)
+    const rentedDevices = devices.filter(d => {
+        return d.is_rented === true || d.is_rented === 1 || d.is_rented === 'true' || d.is_rented === '1';
+    });
+    
+    const availableDevices = devices.filter(d => {
+        return !d.is_rented || d.is_rented === false || d.is_rented === 0 || d.is_rented === 'false' || d.is_rented === '0' || d.is_rented === null;
+    });
     
     console.log('=== DISPLAY DEVICES ===');
     console.log('Total dispositivos:', devices.length);
@@ -690,8 +710,10 @@ async function handleStartRental(e) {
         return;
     }
     
+    console.log('Iniciando alquiler para dispositivo:', currentRentalDeviceId, 'duración:', durationHours);
+    
     try {
-        const response = await fetch(`/api/devices/${currentRentalDeviceId}/rental`, {
+        const response = await fetch(`/api/devices/${currentRentalDeviceId}/rent`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
