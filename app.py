@@ -1,4 +1,4 @@
-sk import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
