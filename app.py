@@ -380,7 +380,7 @@ def request_location(device_id):
         
         # Obtener mensaje
         data = request.get_json()
-        message = data.get('message', 'LOC') if data else 'LOC'
+        message = data.get('message', 'URL#') if data else 'URL#'
         
         # Intentar usar SMS gratis primero (módem GSM o Android)
         sms_sent = False
