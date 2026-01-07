@@ -35,12 +35,12 @@ document.addEventListener('DOMContentLoaded', function() {
         mobileOverlay.addEventListener('click', closeMobileMenu);
     }
     
-    // Actualizar ubicaciones cada 30 segundos (solo si no hay dispositivo seleccionado)
+    // Actualizar ubicaciones cada 5 segundos (solo si no hay dispositivo seleccionado)
     setInterval(() => {
         if (!selectedDeviceId) {
             loadDevices();
         }
-    }, 30000);
+    }, 5000);
     
     // Verificar alquileres expirados cada minuto (DESACTIVADO)
     // setInterval(checkExpiredRentals, 60000);
@@ -544,7 +544,7 @@ async function requestLocation(deviceId) {
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ message: 'LOC' })
+            body: JSON.stringify({ message: 'URL#' })
         });
         
         const result = await response.json();
@@ -1042,6 +1042,7 @@ async function checkAutoUpdateStatus() {
 //         }
 //     }
 // }, 3000);
+
 
 
 
