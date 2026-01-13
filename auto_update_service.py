@@ -17,6 +17,14 @@ except ImportError:
     TWILIO_AVAILABLE = False
     print("Advertencia: Twilio no está disponible")
 
+# Importar Vonage
+try:
+    import vonage
+    VONAGE_AVAILABLE = True
+except ImportError:
+    VONAGE_AVAILABLE = False
+    print("Advertencia: Vonage no está disponible")
+
 # Importar SMS gratis (módem GSM o Android)
 try:
     from sms_sender_free import FreeSMSSender, create_sms_sender
@@ -63,9 +71,33 @@ class AutoUpdateService:
                 self.sms_method = self.free_sms_sender.method
                 print(f"✓ Usando método de SMS gratis: {self.sms_method}")
             else:
-                print("⚠ Método de SMS gratis no disponible, usando Twilio como respaldo")
+                print("⚠ Método de SMS gratis no disponible, usando Vonage/Twilio como respaldo")
+        
+        # Configurar Vonage (prioridad sobre Twilio)
+        self.vonage_configured = False
+        if VONAGE_AVAILABLE:
+            vonage_api_key = os.getenv('VONAGE_API_KEY')
+            vonage_api_secret = os.getenv('VONAGE_API_SECRET')
+            vonage_phone = os.getenv('VONAGE_PHONE_NUMBER', 'API de Vonage')  # Usar texto por defecto si no hay número
+            
+            if vonage_api_key and vonage_api_secret:
+                try:
+                    self.vonage_client = vonage.Client(key=vonage_api_key, secret=vonage_api_secret)
+                    self.vonage_sms = vonage.Sms(self.vonage_client)
+                    self.vonage_phone = vonage_phone
+                    self.vonage_configured = True
+                    if not self.sms_method:
+                        print(f"✓ Vonage configurado como método principal (from: {vonage_phone})")
+                except Exception as e:
+                    print(f"Error configurando Vonage: {e}")
+                    self.vonage_configured = False
+            else:
+                self.vonage_configured = False
+        else:
+            self.vonage_configured = False
         
         # Configurar Twilio como respaldo
+        self.twilio_configured = False
         if TWILIO_AVAILABLE:
             account_sid = os.getenv('TWILIO_ACCOUNT_SID')
             auth_token = os.getenv('TWILIO_AUTH_TOKEN')
@@ -76,7 +108,7 @@ class AutoUpdateService:
                     self.twilio_client = Client(account_sid, auth_token)
                     self.twilio_phone = twilio_phone
                     self.twilio_configured = True
-                    if not self.sms_method:
+                    if not self.sms_method and not self.vonage_configured:
                         print("✓ Twilio configurado como método principal")
                 except Exception as e:
                     print(f"Error configurando Twilio: {e}")
@@ -87,12 +119,13 @@ class AutoUpdateService:
             self.twilio_configured = False
         
         # Verificar que al menos un método esté disponible
-        if not self.sms_method and not self.twilio_configured:
+        if not self.sms_method and not self.vonage_configured and not self.twilio_configured:
             print("⚠ ADVERTENCIA: No hay método de envío de SMS configurado")
             print("  Opciones:")
             print("  1. Conecta un módem GSM USB y configura SMS_METHOD=gsm_modem")
             print("  2. Conecta un teléfono Android y configura SMS_METHOD=android_phone")
-            print("  3. Configura Twilio con TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER")
+            print("  3. Configura Vonage con VONAGE_API_KEY, VONAGE_API_SECRET, VONAGE_PHONE_NUMBER")
+            print("  4. Configura Twilio con TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER")
     
     def _format_phone_number(self, phone):
         """
@@ -144,10 +177,33 @@ class AutoUpdateService:
                         'method': self.sms_method
                     }
                 else:
-                    # Si falla el método gratis, intentar Twilio como respaldo
-                    print(f"  ⚠ Método gratis falló: {result.get('error')}, intentando Twilio...")
+                    # Si falla el método gratis, intentar Vonage/Twilio como respaldo
+                    print(f"  ⚠ Método gratis falló: {result.get('error')}, intentando Vonage/Twilio...")
             except Exception as e:
-                print(f"  ⚠ Error con método gratis: {e}, intentando Twilio...")
+                print(f"  ⚠ Error con método gratis: {e}, intentando Vonage/Twilio...")
+        
+        # Intentar usar Vonage si está configurado
+        if self.vonage_configured:
+            try:
+                response_data = self.vonage_sms.send_message({
+                    'from': self.vonage_phone,
+                    'to': to_number,
+                    'text': message
+                })
+                
+                if response_data["messages"][0]["status"] == "0":
+                    return {
+                        'success': True,
+                        'message_sid': response_data['messages'][0]['message-id'],
+                        'to': to_number,
+                        'device_name': device.name,
+                        'method': 'vonage'
+                    }
+                else:
+                    error_msg = response_data["messages"][0]["error-text"]
+                    print(f"  ⚠ Error con Vonage: {error_msg}, intentando Twilio...")
+            except Exception as e:
+                print(f"  ⚠ Error con Vonage: {e}, intentando Twilio...")
         
         # Usar Twilio como respaldo
         if not self.twilio_configured:
@@ -249,10 +305,10 @@ class AutoUpdateService:
             return {'status': 'already_running', 'message': 'El servicio ya está corriendo'}
         
         # Verificar que al menos un método esté disponible
-        if not self.sms_method and not self.twilio_configured:
+        if not self.sms_method and not self.vonage_configured and not self.twilio_configured:
             return {
                 'status': 'error',
-                'message': 'No hay método de envío de SMS configurado. Configura un módem GSM, Android, o Twilio.'
+                'message': 'No hay método de envío de SMS configurado. Configura un módem GSM, Android, Vonage o Twilio.'
             }
         
         self.is_running = True
@@ -288,11 +344,21 @@ class AutoUpdateService:
         """
         Obtiene el estado actual del servicio
         """
+        # Determinar método principal
+        main_method = None
+        if self.sms_method:
+            main_method = self.sms_method
+        elif self.vonage_configured:
+            main_method = 'vonage'
+        elif self.twilio_configured:
+            main_method = 'twilio'
+        
         return {
             'is_running': self.is_running,
             'interval_seconds': self.interval_seconds,
-            'sms_method': self.sms_method or ('twilio' if self.twilio_configured else None),
+            'sms_method': main_method,
             'free_sms_available': self.free_sms_sender is not None and self.free_sms_sender.is_available() if self.free_sms_sender else False,
+            'vonage_configured': self.vonage_configured,
             'twilio_configured': self.twilio_configured,
             'stats': self.get_stats()
         }
@@ -322,5 +388,8 @@ class AutoUpdateService:
             'message': f'Intervalo actualizado de {old_interval}s a {seconds}s',
             'new_interval': seconds
         }
+
+
+
 
 
