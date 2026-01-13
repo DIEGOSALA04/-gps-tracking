@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template  # pyright: ignore[reportMissingImports]
-from flask_cors import CORS  # pyright: ignore[reportMissingImports]
+from flask_cors import CORS  # pyright: ignore[reportMissingImports, reportMissingModuleSource]
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, inspect, text  # pyright: ignore[reportMissingImports]
 from sqlalchemy.ext.declarative import declarative_base  # pyright: ignore[reportMissingImports]
 from sqlalchemy.orm import sessionmaker  # pyright: ignore[reportMissingImports]
@@ -612,3 +612,4 @@ def set_auto_update_interval():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
