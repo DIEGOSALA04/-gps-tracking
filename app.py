@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker  # pyright: ignore[reportMissingImports]
 from datetime import datetime, timedelta
 import os
 import time
+import requests
 from dotenv import load_dotenv
 
 # Importar el procesador de SMS
@@ -360,16 +361,21 @@ def receive_sms():
         elif request.is_json:
             data = request.get_json()
             # Intentar formato Sinch primero
-            if 'inbound' in data or 'type' in data:
-                # Formato Sinch webhook
-                inbound = data.get('inbound', {})
-                if inbound:
+            if 'inbound' in data or 'type' in data or ('from' in data and 'to' in data and 'message' in data):
+                # Formato Sinch webhook - múltiples variantes
+                if 'inbound' in data:
+                    # Formato: {"inbound": {"from": "...", "body": "..."}}
+                    inbound = data.get('inbound', {})
                     phone_number = inbound.get('from', '')
-                    sms_text = inbound.get('body', '')
+                    sms_text = inbound.get('body', '') or inbound.get('message', '')
+                elif 'from' in data and isinstance(data.get('from'), dict):
+                    # Formato: {"from": {"endpoint": "..."}, "message": "..."}
+                    phone_number = data.get('from', {}).get('endpoint', '')
+                    sms_text = data.get('message', '') or data.get('body', '')
                 else:
                     # Formato alternativo de Sinch
                     phone_number = data.get('from', '')
-                    sms_text = data.get('body', '') or data.get('text', '')
+                    sms_text = data.get('message', '') or data.get('body', '') or data.get('text', '')
             # Intentar formato Vonage
             elif 'msisdn' in data:
                 phone_number = data.get('msisdn', '')
@@ -492,14 +498,57 @@ def request_location(device_id):
                         error_msg = response_data["messages"][0]["error-text"]
                         app.logger.warning(f"Error con Vonage: {error_msg}, intentando Twilio...")
                 except Exception as e:
-                    app.logger.warning(f"Error con Vonage: {e}, intentando Twilio...")
+                    app.logger.warning(f"Error con Vonage: {e}, intentando Sinch/Twilio...")
+                    import traceback
+                    app.logger.debug(traceback.format_exc())
+        
+        # Intentar usar Sinch si está disponible y configurado
+        if not sms_sent:
+            sinch_service_plan_id = os.getenv('SINCH_SERVICE_PLAN_ID')
+            sinch_api_token = os.getenv('SINCH_API_TOKEN')
+            sinch_api_url = os.getenv('SINCH_API_URL', 'https://us.sms.api.sinch.com/xms/v1')
+            sinch_from_number = os.getenv('SINCH_FROM_NUMBER')
+            
+            if sinch_service_plan_id and sinch_api_token and sinch_api_url and sinch_from_number:
+                app.logger.info(f"Intentando enviar SMS con método Sinch (from: {sinch_from_number})")
+                try:
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {sinch_api_token}'
+                    }
+                    body = {
+                        'from': sinch_from_number,
+                        'to': [to_number],
+                        'body': message
+                    }
+                    
+                    # La URL de Sinch ya incluye el service plan ID
+                    full_sinch_url = f"{sinch_api_url.rstrip('/')}/{sinch_service_plan_id}/batches"
+                    
+                    response = requests.post(full_sinch_url, json=body, headers=headers, timeout=15)
+                    
+                    if response.status_code == 201:  # 201 Created for successful batch
+                        response_data = response.json()
+                        app.logger.info(f"SMS enviado exitosamente vía Sinch. Batch ID: {response_data.get('batch_id')}")
+                        return jsonify({
+                            'message': f'SMS enviado exitosamente a {device.name} (método: Sinch)',
+                            'message_sid': response_data.get('batch_id'),
+                            'to': to_number,
+                            'method': 'sinch',
+                            'status': 'success'
+                        }), 200
+                    else:
+                        error_msg = response.text
+                        app.logger.warning(f"Error con Sinch: {error_msg}, intentando Twilio...")
+                except Exception as e:
+                    app.logger.warning(f"Error con Sinch: {e}, intentando Twilio...")
                     import traceback
                     app.logger.debug(traceback.format_exc())
         
         # Usar Twilio como respaldo
         if not TWILIO_AVAILABLE:
             return jsonify({
-                'error': 'No hay método de envío de SMS disponible. Configura un módem GSM, Android, Vonage o Twilio.',
+                'error': 'No hay método de envío de SMS disponible. Configura un módem GSM, Android, Vonage, Sinch o Twilio.',
                 'status': 'error'
             }), 500
         
@@ -510,7 +559,7 @@ def request_location(device_id):
         
         if not account_sid or not auth_token:
             return jsonify({
-                'error': 'Twilio no está configurado. Configura TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN, o usa un módem GSM/Android.',
+                'error': 'Twilio no está configurado. Configura TWILIO_ACCOUNT_SID y TWILIO_AUTH_TOKEN, o usa un módem GSM/Android/Vonage/Sinch.',
                 'status': 'error'
             }), 500
         
