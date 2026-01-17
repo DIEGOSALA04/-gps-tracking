@@ -1,4 +1,4 @@
- """
+"""
 Módulo para enviar SMS usando:
 1. Módem GSM USB (usando AT commands)
 2. Teléfono Android como pasarela (usando SMS Gateway API o ADB)
@@ -444,6 +444,7 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
+
 
 
 
