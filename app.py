@@ -356,11 +356,22 @@ def receive_sms():
         elif 'msisdn' in request.form:
             phone_number = request.form.get('msisdn', '')
             sms_text = request.form.get('text', '')
-        # Formato JSON (directo o Vonage)
+        # Formato JSON (directo, Vonage, o Sinch)
         elif request.is_json:
             data = request.get_json()
-            # Intentar formato Vonage primero
-            if 'msisdn' in data:
+            # Intentar formato Sinch primero
+            if 'inbound' in data or 'type' in data:
+                # Formato Sinch webhook
+                inbound = data.get('inbound', {})
+                if inbound:
+                    phone_number = inbound.get('from', '')
+                    sms_text = inbound.get('body', '')
+                else:
+                    # Formato alternativo de Sinch
+                    phone_number = data.get('from', '')
+                    sms_text = data.get('body', '') or data.get('text', '')
+            # Intentar formato Vonage
+            elif 'msisdn' in data:
                 phone_number = data.get('msisdn', '')
                 sms_text = data.get('text', '')
             # Formato directo o Twilio JSON
@@ -420,24 +431,35 @@ def request_location(device_id):
         if FREE_SMS_AVAILABLE:
             try:
                 sms_method_env = os.getenv('SMS_METHOD', 'auto')
+                app.logger.info(f"Intentando enviar SMS con método: {sms_method_env}")
                 free_sender = create_sms_sender(method=sms_method_env)
-                if free_sender and free_sender.is_available():
-                    result = free_sender.send_sms(to_number, message)
-                    if result.get('success'):
-                        sms_sent = True
-                        sms_method = result.get('method', 'free')
-                        app.logger.info(f"SMS enviado usando método gratis ({sms_method}) a {device.name} ({to_number})")
-                        return jsonify({
-                            'message': f'SMS enviado exitosamente a {device.name} (método: {sms_method})',
-                            'message_sid': f"free_{sms_method}_{int(time.time())}",
-                            'to': to_number,
-                            'method': sms_method,
-                            'status': 'success'
-                        }), 200
+                if free_sender:
+                    app.logger.info(f"Método gratis disponible: {free_sender.is_available()}")
+                    if free_sender.is_available():
+                        app.logger.info(f"Enviando SMS a {to_number} con mensaje: {message}")
+                        result = free_sender.send_sms(to_number, message)
+                        app.logger.info(f"Resultado del envío: {result}")
+                        if result.get('success'):
+                            sms_sent = True
+                            sms_method = result.get('method', 'free')
+                            app.logger.info(f"SMS enviado usando método gratis ({sms_method}) a {device.name} ({to_number})")
+                            return jsonify({
+                                'message': f'SMS enviado exitosamente a {device.name} (método: {sms_method})',
+                                'message_sid': f"free_{sms_method}_{int(time.time())}",
+                                'to': to_number,
+                                'method': sms_method,
+                                'status': 'success'
+                            }), 200
+                        else:
+                            app.logger.warning(f"Error al enviar SMS gratis: {result.get('error')}")
+                    else:
+                        app.logger.warning("Método gratis no disponible")
+                else:
+                    app.logger.warning("No se pudo crear el sender gratis")
             except Exception as e:
                 app.logger.warning(f"Error con método gratis: {e}, intentando Vonage/Twilio...")
                 import traceback
-                app.logger.debug(traceback.format_exc())
+                app.logger.error(traceback.format_exc())
         
         # Intentar usar Vonage si está disponible y configurado
         if VONAGE_AVAILABLE and not sms_sent:
@@ -612,4 +634,3 @@ def set_auto_update_interval():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
