@@ -1,8 +1,10 @@
-"""
-Módulo para enviar SMS gratis usando:
+ """
+Módulo para enviar SMS usando:
 1. Módem GSM USB (usando AT commands)
 2. Teléfono Android como pasarela (usando SMS Gateway API o ADB)
-3. Twilio (como respaldo)
+3. SMSMobileAPI (API en la nube - solo saldo local)
+4. Sinch SMS (servicio de pago - confiable)
+5. Twilio (como respaldo)
 """
 import os
 import serial
@@ -31,6 +33,11 @@ class FreeSMSSender:
         self.android_gateway_token = os.getenv('ANDROID_SMS_GATEWAY_TOKEN', '')
         # API Key para SMSMobileAPI (api.smsmobileapi.com)
         self.smsmobileapi_key = os.getenv('SMSMOBILEAPI_KEY', '')
+        # Credenciales para Sinch SMS
+        self.sinch_service_plan_id = os.getenv('SINCH_SERVICE_PLAN_ID', '')
+        self.sinch_api_token = os.getenv('SINCH_API_TOKEN', '')
+        self.sinch_api_url = os.getenv('SINCH_API_URL', 'https://us.sms.api.sinch.com/xms/v1')
+        self.sinch_from_number = os.getenv('SINCH_FROM_NUMBER', '447418631073')
         
         # Detectar método automáticamente
         if method == 'auto':
@@ -66,6 +73,15 @@ class FreeSMSSender:
         """
         # Verificar SMSMobileAPI primero (API en la nube)
         if self.smsmobileapi_key:
+            print(f"✓ SMSMobileAPI detectado con API KEY: {self.smsmobileapi_key[:20]}...")
+            self.android_available = True
+            return True
+        else:
+            print("⚠ SMSMobileAPI no configurado (SMSMOBILEAPI_KEY no encontrada)")
+        
+        # Verificar Sinch SMS
+        if self.sinch_service_plan_id and self.sinch_api_token:
+            print(f"✓ Sinch SMS detectado con Service Plan ID: {self.sinch_service_plan_id[:20]}...")
             self.android_available = True
             return True
         
@@ -77,10 +93,11 @@ class FreeSMSSender:
                                       timeout=3,
                                       headers={'Authorization': f'Bearer {self.android_gateway_token}'} if self.android_gateway_token else {})
                 if response.status_code == 200:
+                    print(f"✓ Gateway local detectado: {self.android_gateway_url}")
                     self.android_available = True
                     return True
-            except:
-                pass
+            except Exception as e:
+                print(f"⚠ Error verificando gateway local: {e}")
         return False
     
     def _detect_android_phone(self) -> bool:
@@ -194,10 +211,11 @@ class FreeSMSSender:
     
     def _send_sms_android_phone(self, phone_number: str, message: str) -> Dict:
         """
-        Envía SMS usando teléfono Android
-        Método 1 (preferido): SMSMobileAPI - API en la nube (completamente automático)
-        Método 2: SMS Gateway API local - completamente automático
-        Método 3 (respaldo): ADB - abre app de SMS (semi-automático)
+        Envía SMS usando teléfono Android o servicios de SMS
+        Método 1 (preferido): SMSMobileAPI - API en la nube (completamente automático, solo saldo local)
+        Método 2: Sinch SMS - Servicio de pago (confiable, sin prefijo)
+        Método 3: SMS Gateway API local - completamente automático
+        Método 4 (respaldo): ADB - abre app de SMS (semi-automático)
         """
         # Formatear número (remover + y espacios)
         phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
@@ -208,9 +226,12 @@ class FreeSMSSender:
                 # URL de la API de SMSMobileAPI
                 url = "https://api.smsmobileapi.com/sendsms/"
                 
+                # Formatear número: remover + y espacios, solo números
+                phone_clean = phone.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                
                 # Parámetros GET
                 params = {
-                    'recipients': phone,
+                    'recipients': phone_clean,
                     'message': message,
                     'apikey': self.smsmobileapi_key
                 }
@@ -230,11 +251,13 @@ class FreeSMSSender:
                             'gateway_response': result_data
                         }
                     else:
-                        error_msg = result_data.get('result', {}).get('error', 'Error desconocido')
+                        error_code = result_data.get('result', {}).get('error', 'Error desconocido')
+                        error_text = result_data.get('result', {}).get('error-text', '')
                         return {
                             'success': False,
-                            'error': f'Error en SMSMobileAPI: {error_msg}',
-                            'method': 'smsmobileapi'
+                            'error': f'Error en SMSMobileAPI (código {error_code}): {error_text}',
+                            'method': 'smsmobileapi',
+                            'debug': result_data
                         }
                 else:
                     return {
@@ -244,29 +267,92 @@ class FreeSMSSender:
                     }
             except Exception as e:
                 print(f"Error con SMSMobileAPI: {e}, intentando otros métodos...")
+                import traceback
+                print(traceback.format_exc())
         
-        # MÉTODO 2: SMS Gateway API local (completamente automático)
-        if self.android_gateway_url:
+        # MÉTODO 2: Sinch SMS (servicio de pago - confiable)
+        if self.sinch_service_plan_id and self.sinch_api_token:
             try:
-                # Construir URL de la API
-                url = f"{self.android_gateway_url}/send"
+                # URL completa de Sinch API
+                url = f"{self.sinch_api_url}/{self.sinch_service_plan_id}/batches"
                 
-                # Preparar datos
-                data = {
-                    'phone': phone,
-                    'message': message
+                # Formatear número: remover + y espacios, solo números
+                phone_clean = phone.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                
+                # Headers
+                headers = {
+                    'Authorization': f'Bearer {self.sinch_api_token}',
+                    'Content-Type': 'application/json'
                 }
                 
-                # Headers opcionales (si hay token)
-                headers = {}
-                if self.android_gateway_token:
-                    headers['Authorization'] = f'Bearer {self.android_gateway_token}'
+                # Body
+                data = {
+                    'from': self.sinch_from_number,
+                    'to': [phone_clean],
+                    'body': message
+                }
                 
                 # Enviar solicitud
-                response = requests.post(url, json=data, headers=headers, timeout=10)
+                response = requests.post(url, json=data, headers=headers, timeout=15)
+                
+                if response.status_code == 200 or response.status_code == 201:
+                    result_data = response.json()
+                    return {
+                        'success': True,
+                        'method': 'sinch',
+                        'to': phone_number,
+                        'message': 'SMS enviado exitosamente vía Sinch',
+                        'gateway_response': result_data
+                    }
+                else:
+                    error_text = response.text
+                    return {
+                        'success': False,
+                        'error': f'Error en Sinch (HTTP {response.status_code}): {error_text}',
+                        'method': 'sinch',
+                        'debug': response.text
+                    }
+            except Exception as e:
+                print(f"Error con Sinch: {e}, intentando otros métodos...")
+                import traceback
+                print(traceback.format_exc())
+        
+        # MÉTODO 3: SMS Gateway API local (completamente automático)
+        # Soporta Traccar SMS Gateway y otros gateways locales
+        if self.android_gateway_url:
+            try:
+                # Intentar formato Traccar SMS Gateway primero
+                # Traccar usa: POST /api/sms/send con token en header
+                if 'traccar' in self.android_gateway_url.lower() or self.android_gateway_token:
+                    # Formato Traccar SMS Gateway
+                    url = f"{self.android_gateway_url.rstrip('/')}/api/sms/send"
+                    headers = {
+                        'Content-Type': 'application/json'
+                    }
+                    if self.android_gateway_token:
+                        headers['X-Traccar-Token'] = self.android_gateway_token
+                    
+                    data = {
+                        'phone': phone,
+                        'message': message
+                    }
+                    
+                    response = requests.post(url, json=data, headers=headers, timeout=10)
+                else:
+                    # Formato genérico SMS Gateway
+                    url = f"{self.android_gateway_url.rstrip('/')}/send"
+                    data = {
+                        'phone': phone,
+                        'message': message
+                    }
+                    headers = {}
+                    if self.android_gateway_token:
+                        headers['Authorization'] = f'Bearer {self.android_gateway_token}'
+                    
+                    response = requests.post(url, json=data, headers=headers, timeout=10)
                 
                 if response.status_code == 200:
-                    result_data = response.json()
+                    result_data = response.json() if response.text else {}
                     return {
                         'success': True,
                         'method': 'android_phone_gateway',
@@ -358,4 +444,6 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
+
+
 
