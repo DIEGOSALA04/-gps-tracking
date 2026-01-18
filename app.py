@@ -437,10 +437,18 @@ def request_location(device_id):
         if FREE_SMS_AVAILABLE:
             try:
                 sms_method_env = os.getenv('SMS_METHOD', 'auto')
+                # Verificar variables de entorno para diagnóstico
+                smsmobileapi_key = os.getenv('SMSMOBILEAPI_KEY', '')
+                messagebird_api_key = os.getenv('MESSAGEBIRD_API_KEY', '')
+                sinch_service_plan_id = os.getenv('SINCH_SERVICE_PLAN_ID', '')
                 app.logger.info(f"Intentando enviar SMS con método: {sms_method_env}")
+                app.logger.info(f"SMSMobileAPI_KEY configurado: {'Sí' if smsmobileapi_key else 'No'}")
+                app.logger.info(f"MessageBird configurado: {'Sí' if messagebird_api_key else 'No'}")
+                app.logger.info(f"Sinch configurado: {'Sí' if sinch_service_plan_id else 'No'}")
+                
                 free_sender = create_sms_sender(method=sms_method_env)
                 if free_sender:
-                    app.logger.info(f"Método gratis disponible: {free_sender.is_available()}")
+                    app.logger.info(f"Método gratis disponible: {free_sender.is_available()}, método detectado: {free_sender.method}")
                     if free_sender.is_available():
                         app.logger.info(f"Enviando SMS a {to_number} con mensaje: {message}")
                         result = free_sender.send_sms(to_number, message)
@@ -457,9 +465,11 @@ def request_location(device_id):
                                 'status': 'success'
                             }), 200
                         else:
-                            app.logger.warning(f"Error al enviar SMS gratis: {result.get('error')}")
+                            error_msg = result.get('error', 'Error desconocido')
+                            app.logger.warning(f"Error al enviar SMS gratis: {error_msg}")
+                            app.logger.info(f"Intentando métodos de pago (Vonage/Sinch/Twilio)...")
                     else:
-                        app.logger.warning("Método gratis no disponible")
+                        app.logger.warning(f"Método gratis no disponible. Método detectado: {free_sender.method if free_sender else 'None'}")
                 else:
                     app.logger.warning("No se pudo crear el sender gratis")
             except Exception as e:
@@ -525,20 +535,27 @@ def request_location(device_id):
                     # La URL de Sinch ya incluye el service plan ID
                     full_sinch_url = f"{sinch_api_url.rstrip('/')}/{sinch_service_plan_id}/batches"
                     
+                    app.logger.info(f"Enviando SMS a Sinch: URL={full_sinch_url}, to={to_number}, from={sinch_from_number}")
                     response = requests.post(full_sinch_url, json=body, headers=headers, timeout=15)
+                    
+                    app.logger.info(f"Respuesta de Sinch: Status={response.status_code}, Body={response.text}")
                     
                     if response.status_code == 201:  # 201 Created for successful batch
                         response_data = response.json()
-                        app.logger.info(f"SMS enviado exitosamente vía Sinch. Batch ID: {response_data.get('batch_id')}")
+                        batch_id = response_data.get('id') or response_data.get('batch_id')
+                        app.logger.info(f"SMS aceptado por Sinch. Batch ID: {batch_id}")
+                        app.logger.info(f"NOTA: En modo trial, Sinch solo envía a números verificados. Verifica {to_number} en el dashboard de Sinch.")
                         return jsonify({
-                            'message': f'SMS enviado exitosamente a {device.name} (método: Sinch)',
-                            'message_sid': response_data.get('batch_id'),
+                            'message': f'SMS aceptado por Sinch a {device.name} (método: Sinch). En modo trial, verifica el número en Sinch.',
+                            'message_sid': batch_id,
                             'to': to_number,
                             'method': 'sinch',
-                            'status': 'success'
+                            'status': 'accepted',
+                            'warning': 'En modo trial, Sinch solo envía a números verificados. Verifica el número en el dashboard de Sinch.'
                         }), 200
                     else:
                         error_msg = response.text
+                        app.logger.error(f"Error con Sinch (HTTP {response.status_code}): {error_msg}")
                         app.logger.warning(f"Error con Sinch: {error_msg}, intentando Twilio...")
                 except Exception as e:
                     app.logger.warning(f"Error con Sinch: {e}, intentando Twilio...")
@@ -683,4 +700,3 @@ def set_auto_update_interval():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
