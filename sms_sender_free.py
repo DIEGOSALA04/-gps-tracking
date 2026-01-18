@@ -3,8 +3,9 @@ Módulo para enviar SMS usando:
 1. Módem GSM USB (usando AT commands)
 2. Teléfono Android como pasarela (usando SMS Gateway API o ADB)
 3. SMSMobileAPI (API en la nube - solo saldo local)
-4. Sinch SMS (servicio de pago - confiable)
-5. Twilio (como respaldo)
+4. MessageBird (servicio de pago - confiable, sin prefijo)
+5. Sinch SMS (servicio de pago - confiable)
+6. Twilio (como respaldo)
 """
 import os
 import serial
@@ -38,15 +39,29 @@ class FreeSMSSender:
         self.sinch_api_token = os.getenv('SINCH_API_TOKEN', '')
         self.sinch_api_url = os.getenv('SINCH_API_URL', 'https://us.sms.api.sinch.com/xms/v1')
         self.sinch_from_number = os.getenv('SINCH_FROM_NUMBER', '447418631073')
+        # Credenciales para MessageBird
+        self.messagebird_api_key = os.getenv('MESSAGEBIRD_API_KEY', '')
+        self.messagebird_originator = os.getenv('MESSAGEBIRD_ORIGINATOR', 'MessageBird')
         
         # Detectar método automáticamente
         if method == 'auto':
-            if self._detect_gsm_modem():
+            # Prioridad 1: SMSMobileAPI, MessageBird o Sinch (métodos automáticos sin prefijo)
+            if self._check_android_gateway():
+                self.method = 'android_phone'
+                if self.smsmobileapi_key:
+                    print("✓ SMSMobileAPI detectado (método preferido - sin prefijo)")
+                elif self.messagebird_api_key:
+                    print("✓ MessageBird detectado (método preferido - sin prefijo)")
+                elif self.sinch_service_plan_id:
+                    print("✓ Sinch SMS detectado (método preferido - sin prefijo)")
+            # Prioridad 2: Módem GSM
+            elif self._detect_gsm_modem():
                 self.method = 'gsm_modem'
                 print("✓ Módem GSM detectado")
-            elif self._detect_android_phone() or self._check_android_gateway():
+            # Prioridad 3: Android ADB (semi-automático)
+            elif self._detect_android_phone():
                 self.method = 'android_phone'
-                print("✓ Teléfono Android detectado")
+                print("✓ Teléfono Android detectado (ADB)")
             else:
                 self.method = None
                 print("⚠ No se detectó módem GSM ni teléfono Android")
@@ -71,13 +86,19 @@ class FreeSMSSender:
         """
         Verifica si hay una app SMS Gateway configurada (método automático)
         """
-        # Verificar SMSMobileAPI primero (API en la nube)
+        # Verificar SMSMobileAPI primero (API en la nube - método preferido)
         if self.smsmobileapi_key:
             print(f"✓ SMSMobileAPI detectado con API KEY: {self.smsmobileapi_key[:20]}...")
             self.android_available = True
             return True
         else:
             print("⚠ SMSMobileAPI no configurado (SMSMOBILEAPI_KEY no encontrada)")
+        
+        # Verificar MessageBird (servicio confiable, sin prefijo)
+        if self.messagebird_api_key:
+            print(f"✓ MessageBird detectado con API KEY: {self.messagebird_api_key[:20]}...")
+            self.android_available = True
+            return True
         
         # Verificar Sinch SMS
         if self.sinch_service_plan_id and self.sinch_api_token:
@@ -213,9 +234,10 @@ class FreeSMSSender:
         """
         Envía SMS usando teléfono Android o servicios de SMS
         Método 1 (preferido): SMSMobileAPI - API en la nube (completamente automático, solo saldo local)
-        Método 2: Sinch SMS - Servicio de pago (confiable, sin prefijo)
-        Método 3: SMS Gateway API local - completamente automático
-        Método 4 (respaldo): ADB - abre app de SMS (semi-automático)
+        Método 2: MessageBird - Servicio de pago (confiable, sin prefijo)
+        Método 3: Sinch SMS - Servicio de pago (confiable, sin prefijo)
+        Método 4: SMS Gateway API local - completamente automático
+        Método 5 (respaldo): ADB - abre app de SMS (semi-automático)
         """
         # Formatear número (remover + y espacios)
         phone = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
@@ -270,7 +292,59 @@ class FreeSMSSender:
                 import traceback
                 print(traceback.format_exc())
         
-        # MÉTODO 2: Sinch SMS (servicio de pago - confiable)
+        # MÉTODO 2: MessageBird (servicio de pago - confiable, sin prefijo)
+        if self.messagebird_api_key:
+            try:
+                # URL de la API de MessageBird
+                url = "https://rest.messagebird.com/messages"
+                
+                # Formatear número: MessageBird requiere formato internacional con +
+                phone_clean = phone_number if phone_number.startswith('+') else f'+{phone}'
+                
+                # Headers
+                headers = {
+                    'Authorization': f'AccessKey {self.messagebird_api_key}',
+                    'Content-Type': 'application/json'
+                }
+                
+                # Body
+                data = {
+                    'originator': self.messagebird_originator,
+                    'recipients': [phone_clean],
+                    'body': message
+                }
+                
+                # Enviar solicitud
+                response = requests.post(url, json=data, headers=headers, timeout=15)
+                
+                if response.status_code == 201:  # 201 Created for MessageBird
+                    result_data = response.json()
+                    return {
+                        'success': True,
+                        'method': 'messagebird',
+                        'to': phone_number,
+                        'message': 'SMS enviado exitosamente vía MessageBird',
+                        'gateway_response': result_data
+                    }
+                else:
+                    error_text = response.text
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('errors', [{}])[0].get('description', error_text)
+                    except:
+                        error_msg = error_text
+                    return {
+                        'success': False,
+                        'error': f'Error en MessageBird (HTTP {response.status_code}): {error_msg}',
+                        'method': 'messagebird',
+                        'debug': response.text
+                    }
+            except Exception as e:
+                print(f"Error con MessageBird: {e}, intentando otros métodos...")
+                import traceback
+                print(traceback.format_exc())
+        
+        # MÉTODO 3: Sinch SMS (servicio de pago - confiable)
         if self.sinch_service_plan_id and self.sinch_api_token:
             try:
                 # URL completa de Sinch API
@@ -444,7 +518,5 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
-
-
 
 
