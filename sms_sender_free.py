@@ -273,27 +273,27 @@ class FreeSMSSender:
                             'gateway_response': result_data
                         }
                     else:
+                        # Error en SMSMobileAPI, continuar con otros métodos
                         error_code = result_data.get('result', {}).get('error', 'Error desconocido')
                         error_text = result_data.get('result', {}).get('error-text', '')
-                        return {
-                            'success': False,
-                            'error': f'Error en SMSMobileAPI (código {error_code}): {error_text}',
-                            'method': 'smsmobileapi',
-                            'debug': result_data
-                        }
+                        print(f"⚠ SMSMobileAPI falló (código {error_code}): {error_text}, intentando MessageBird/Sinch...")
+                        import sys
+                        sys.stdout.flush()  # Forzar que se muestre el mensaje
                 else:
-                    return {
-                        'success': False,
-                        'error': f'Error HTTP {response.status_code}: {response.text}',
-                        'method': 'smsmobileapi'
-                    }
+                    print(f"⚠ SMSMobileAPI falló (HTTP {response.status_code}): {response.text}, intentando MessageBird/Sinch...")
+                    import sys
+                    sys.stdout.flush()  # Forzar que se muestre el mensaje
             except Exception as e:
-                print(f"Error con SMSMobileAPI: {e}, intentando otros métodos...")
+                print(f"⚠ Error con SMSMobileAPI: {e}, intentando otros métodos...")
                 import traceback
                 print(traceback.format_exc())
         
         # MÉTODO 2: MessageBird (servicio de pago - confiable, sin prefijo)
         if self.messagebird_api_key:
+            # Log para diagnóstico (se verá en app.py)
+            print(f"🔄 Intentando MessageBird (API Key configurada: {self.messagebird_api_key[:20]}...)")
+            import sys
+            sys.stdout.flush()
             try:
                 # URL de la API de MessageBird
                 url = "https://rest.messagebird.com/messages"
@@ -314,11 +314,19 @@ class FreeSMSSender:
                     'body': message
                 }
                 
+                print(f"🔄 Enviando SMS vía MessageBird a {phone_clean} desde {self.messagebird_originator}")
+                sys.stdout.flush()
+                
                 # Enviar solicitud
                 response = requests.post(url, json=data, headers=headers, timeout=15)
                 
+                print(f"🔄 Respuesta de MessageBird: Status={response.status_code}, Body={response.text[:200]}")
+                sys.stdout.flush()
+                
                 if response.status_code == 201:  # 201 Created for MessageBird
                     result_data = response.json()
+                    print(f"✅ MessageBird exitoso!")
+                    sys.stdout.flush()
                     return {
                         'success': True,
                         'method': 'messagebird',
@@ -327,22 +335,24 @@ class FreeSMSSender:
                         'gateway_response': result_data
                     }
                 else:
+                    # Error en MessageBird, continuar con otros métodos
                     error_text = response.text
                     try:
                         error_data = response.json()
                         error_msg = error_data.get('errors', [{}])[0].get('description', error_text)
                     except:
                         error_msg = error_text
-                    return {
-                        'success': False,
-                        'error': f'Error en MessageBird (HTTP {response.status_code}): {error_msg}',
-                        'method': 'messagebird',
-                        'debug': response.text
-                    }
+                    print(f"⚠ MessageBird falló (HTTP {response.status_code}): {error_msg}, intentando Sinch...")
+                    sys.stdout.flush()
             except Exception as e:
-                print(f"Error con MessageBird: {e}, intentando otros métodos...")
+                print(f"⚠ Error con MessageBird: {e}, intentando otros métodos...")
                 import traceback
                 print(traceback.format_exc())
+                sys.stdout.flush()
+        else:
+            print(f"⚠ MessageBird no configurado (MESSAGEBIRD_API_KEY vacía)")
+            import sys
+            sys.stdout.flush()
         
         # MÉTODO 3: Sinch SMS (servicio de pago - confiable)
         if self.sinch_service_plan_id and self.sinch_api_token:
@@ -379,15 +389,11 @@ class FreeSMSSender:
                         'gateway_response': result_data
                     }
                 else:
+                    # Error en Sinch, continuar con otros métodos
                     error_text = response.text
-                    return {
-                        'success': False,
-                        'error': f'Error en Sinch (HTTP {response.status_code}): {error_text}',
-                        'method': 'sinch',
-                        'debug': response.text
-                    }
+                    print(f"⚠ Sinch falló (HTTP {response.status_code}): {error_text}, intentando otros métodos...")
             except Exception as e:
-                print(f"Error con Sinch: {e}, intentando otros métodos...")
+                print(f"⚠ Error con Sinch: {e}, intentando otros métodos...")
                 import traceback
                 print(traceback.format_exc())
         
@@ -518,5 +524,6 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
+
 
 
