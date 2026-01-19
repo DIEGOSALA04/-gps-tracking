@@ -451,8 +451,13 @@ def request_location(device_id):
                     app.logger.info(f"Método gratis disponible: {free_sender.is_available()}, método detectado: {free_sender.method}")
                     if free_sender.is_available():
                         app.logger.info(f"Enviando SMS a {to_number} con mensaje: {message}")
+                        # Verificar si MessageBird está disponible antes de enviar
+                        messagebird_key = os.getenv('MESSAGEBIRD_API_KEY', '')
+                        app.logger.info(f"MessageBird API Key disponible: {'Sí' if messagebird_key else 'No'} (longitud: {len(messagebird_key)})")
+                        
                         result = free_sender.send_sms(to_number, message)
                         app.logger.info(f"Resultado del envío: {result}")
+                        app.logger.info(f"Método usado: {result.get('method', 'desconocido')}, Éxito: {result.get('success', False)}")
                         if result.get('success'):
                             sms_sent = True
                             sms_method = result.get('method', 'free')
@@ -700,3 +705,4 @@ def set_auto_update_interval():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
