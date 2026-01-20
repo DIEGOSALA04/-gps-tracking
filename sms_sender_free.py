@@ -291,19 +291,23 @@ class FreeSMSSender:
         # MÉTODO 2: MessageBird (servicio de pago - confiable, sin prefijo)
         if self.messagebird_api_key:
             # Log para diagnóstico (se verá en app.py)
-            print(f"🔄 Intentando MessageBird (API Key configurada: {self.messagebird_api_key[:20]}...)")
+            api_key_preview = self.messagebird_api_key[:20] if len(self.messagebird_api_key) > 20 else self.messagebird_api_key
+            print(f"🔄 Intentando MessageBird (API Key configurada: {api_key_preview}..., longitud: {len(self.messagebird_api_key)})")
             import sys
             sys.stdout.flush()
             try:
+                # Limpiar API Key (eliminar espacios al inicio/final)
+                api_key_clean = self.messagebird_api_key.strip()
+                
                 # URL de la API de MessageBird
                 url = "https://rest.messagebird.com/messages"
                 
                 # Formatear número: MessageBird requiere formato internacional con +
-                phone_clean = phone_number if phone_number.startswith('+') else f'+{phone}'
+                phone_clean = phone_number if phone_number.startswith('+') else f'+{phone_number}'
                 
                 # Headers
                 headers = {
-                    'Authorization': f'AccessKey {self.messagebird_api_key}',
+                    'Authorization': f'AccessKey {api_key_clean}',
                     'Content-Type': 'application/json'
                 }
                 
@@ -314,7 +318,12 @@ class FreeSMSSender:
                     'body': message
                 }
                 
-                print(f"🔄 Enviando SMS vía MessageBird a {phone_clean} desde {self.messagebird_originator}")
+                print(f"🔄 Enviando SMS vía MessageBird:")
+                print(f"   - URL: {url}")
+                print(f"   - Destino: {phone_clean}")
+                print(f"   - Originator: {self.messagebird_originator}")
+                print(f"   - API Key (primeros 20 chars): {api_key_clean[:20]}...")
+                print(f"   - API Key (longitud): {len(api_key_clean)} caracteres")
                 sys.stdout.flush()
                 
                 # Enviar solicitud
@@ -340,9 +349,13 @@ class FreeSMSSender:
                     try:
                         error_data = response.json()
                         error_msg = error_data.get('errors', [{}])[0].get('description', error_text)
+                        error_code = error_data.get('errors', [{}])[0].get('code', 'unknown')
+                        print(f"⚠ MessageBird falló (HTTP {response.status_code}, código: {error_code}): {error_msg}")
                     except:
                         error_msg = error_text
-                    print(f"⚠ MessageBird falló (HTTP {response.status_code}): {error_msg}, intentando Sinch...")
+                        print(f"⚠ MessageBird falló (HTTP {response.status_code}): {error_msg}")
+                    print(f"⚠ Respuesta completa de MessageBird: {response.text}")
+                    print(f"⚠ Intentando Sinch...")
                     sys.stdout.flush()
             except Exception as e:
                 print(f"⚠ Error con MessageBird: {e}, intentando otros métodos...")
@@ -524,6 +537,7 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
+
 
 
 
