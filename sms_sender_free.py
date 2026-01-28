@@ -2,6 +2,10 @@
 Módulo para enviar SMS usando:
 1. Módem GSM USB (usando AT commands)
 2. Teléfono Android como pasarela (usando SMS Gateway API o ADB)
+   - Simple SMS Gateway (http://IP:8080/send-sms) - RECOMENDADO
+   - SMS Gateway App de Mattia A. (http://IP:8080/send)
+   - Traccar SMS Gateway
+   - Otras apps SMS Gateway similares
 3. SMSMobileAPI (API en la nube - solo saldo local)
 4. MessageBird (servicio de pago - confiable, sin prefijo)
 5. Sinch SMS (servicio de pago - confiable)
@@ -40,8 +44,18 @@ class FreeSMSSender:
         self.sinch_api_url = os.getenv('SINCH_API_URL', 'https://us.sms.api.sinch.com/xms/v1')
         self.sinch_from_number = os.getenv('SINCH_FROM_NUMBER', '447418631073')
         # Credenciales para MessageBird
-        self.messagebird_api_key = os.getenv('MESSAGEBIRD_API_KEY', '')
+        self.messagebird_api_key = os.getenv('MESSAGEBIRD_API_KEY', '').strip()
         self.messagebird_originator = os.getenv('MESSAGEBIRD_ORIGINATOR', 'MessageBird')
+        
+        # Debug: Verificar API Key al inicializar
+        if self.messagebird_api_key:
+            print(f"🔍 MessageBird API Key detectada al inicializar:")
+            print(f"   - Longitud: {len(self.messagebird_api_key)} caracteres")
+            print(f"   - Primeros 20: {self.messagebird_api_key[:20]}...")
+            print(f"   - Últimos 10: ...{self.messagebird_api_key[-10:]}")
+            print(f"   - Valor completo: {self.messagebird_api_key}")
+            import sys
+            sys.stdout.flush()
         
         # Detectar método automáticamente
         if method == 'auto':
@@ -106,19 +120,11 @@ class FreeSMSSender:
             self.android_available = True
             return True
         
-        # Verificar gateway local
+        # Verificar gateway local (SMS Gateway app de Mattia A. u otras apps similares)
         if self.android_gateway_url:
-            try:
-                # Intentar hacer ping a la API para verificar que está disponible
-                response = requests.get(f"{self.android_gateway_url}/status", 
-                                      timeout=3,
-                                      headers={'Authorization': f'Bearer {self.android_gateway_token}'} if self.android_gateway_token else {})
-                if response.status_code == 200:
-                    print(f"✓ Gateway local detectado: {self.android_gateway_url}")
-                    self.android_available = True
-                    return True
-            except Exception as e:
-                print(f"⚠ Error verificando gateway local: {e}")
+            print(f"✓ Android SMS Gateway URL configurada: {self.android_gateway_url}")
+            self.android_available = True
+            return True
         return False
     
     def _detect_android_phone(self) -> bool:
@@ -292,12 +298,18 @@ class FreeSMSSender:
         if self.messagebird_api_key:
             # Log para diagnóstico (se verá en app.py)
             api_key_preview = self.messagebird_api_key[:20] if len(self.messagebird_api_key) > 20 else self.messagebird_api_key
-            print(f"🔄 Intentando MessageBird (API Key configurada: {api_key_preview}..., longitud: {len(self.messagebird_api_key)})")
+            print(f"🔄 Intentando MessageBird:")
+            print(f"   - API Key (primeros 20): {api_key_preview}...")
+            print(f"   - API Key (longitud): {len(self.messagebird_api_key)} caracteres")
+            print(f"   - API Key (últimos 10): ...{self.messagebird_api_key[-10:]}")
+            print(f"   - API Key (valor completo): '{self.messagebird_api_key}'")
             import sys
             sys.stdout.flush()
             try:
                 # Limpiar API Key (eliminar espacios al inicio/final)
                 api_key_clean = self.messagebird_api_key.strip()
+                print(f"   - API Key después de strip: '{api_key_clean}' (longitud: {len(api_key_clean)})")
+                sys.stdout.flush()
                 
                 # URL de la API de MessageBird
                 url = "https://rest.messagebird.com/messages"
@@ -412,11 +424,18 @@ class FreeSMSSender:
         
         # MÉTODO 3: SMS Gateway API local (completamente automático)
         # Soporta Traccar SMS Gateway y otros gateways locales
+        # MÉTODO 4: Android SMS Gateway App (SMS Gateway de Mattia A. u otras apps similares)
         if self.android_gateway_url:
             try:
+                print(f"🔄 Intentando Android SMS Gateway: {self.android_gateway_url}")
+                import sys
+                sys.stdout.flush()
+                
+                # Formatear número: remover + y espacios para la app
+                phone_clean = phone_number.replace('+', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
+                
                 # Intentar formato Traccar SMS Gateway primero
-                # Traccar usa: POST /api/sms/send con token en header
-                if 'traccar' in self.android_gateway_url.lower() or self.android_gateway_token:
+                if 'traccar' in self.android_gateway_url.lower():
                     # Formato Traccar SMS Gateway
                     url = f"{self.android_gateway_url.rstrip('/')}/api/sms/send"
                     headers = {
@@ -426,37 +445,138 @@ class FreeSMSSender:
                         headers['X-Traccar-Token'] = self.android_gateway_token
                     
                     data = {
-                        'phone': phone,
+                        'phone': phone_clean,
                         'message': message
                     }
                     
-                    response = requests.post(url, json=data, headers=headers, timeout=10)
+                    print(f"   - Formato: Traccar SMS Gateway")
+                    print(f"   - URL: {url}")
+                    print(f"   - Destino: {phone_clean}")
+                    sys.stdout.flush()
+                    
+                    response = requests.post(url, json=data, headers=headers, timeout=15)
                 else:
-                    # Formato genérico SMS Gateway
-                    url = f"{self.android_gateway_url.rstrip('/')}/send"
-                    data = {
-                        'phone': phone,
+                    # SIMPLE SMS GATEWAY - Formato específico y optimizado
+                    # Simple SMS Gateway usa: POST /send-sms con JSON {"phone": "...", "message": "..."}
+                    base_url = self.android_gateway_url.rstrip('/')
+                    
+                    # Construir URL específica de Simple SMS Gateway
+                    if '/send-sms' in base_url:
+                        simple_sms_url = base_url
+                    else:
+                        simple_sms_url = f"{base_url}/send-sms"
+                    
+                    # Formato específico de Simple SMS Gateway
+                    simple_sms_data = {
+                        'phone': phone_clean,
                         'message': message
                     }
-                    headers = {}
-                    if self.android_gateway_token:
-                        headers['Authorization'] = f'Bearer {self.android_gateway_token}'
                     
-                    response = requests.post(url, json=data, headers=headers, timeout=10)
+                    # Simple SMS Gateway NO requiere token
+                    print(f"   - Formato: Simple SMS Gateway (específico)")
+                    print(f"   - URL: {simple_sms_url}")
+                    print(f"   - Destino: {phone_clean}")
+                    print(f"   - Método: POST con JSON")
+                    sys.stdout.flush()
+                    
+                    # Intentar Simple SMS Gateway primero (formato específico)
+                    headers = {'Content-Type': 'application/json'}
+                    print(f"   - Probando Simple SMS Gateway: POST {simple_sms_url}")
+                    sys.stdout.flush()
+                    
+                    try:
+                        response = requests.post(simple_sms_url, json=simple_sms_data, headers=headers, timeout=15)
+                        
+                        if response.status_code == 200:
+                            print(f"   - ✅ Éxito con Simple SMS Gateway!")
+                            sys.stdout.flush()
+                            # Éxito, continuar con el procesamiento de respuesta
+                        elif response.status_code in [404, 405]:
+                            # Si falla, intentar otros formatos como respaldo
+                            print(f"   - ⚠ Simple SMS Gateway falló (HTTP {response.status_code}), intentando otros formatos...")
+                            sys.stdout.flush()
+                            raise Exception(f"Simple SMS Gateway falló con HTTP {response.status_code}")
+                        else:
+                            print(f"   - ⚠ Simple SMS Gateway falló (HTTP {response.status_code}): {response.text[:200]}")
+                            sys.stdout.flush()
+                            raise Exception(f"Simple SMS Gateway falló con HTTP {response.status_code}")
+                    except requests.exceptions.RequestException as e:
+                        # Si Simple SMS Gateway falla por error de conexión, intentar otros formatos como respaldo
+                        print(f"   - ⚠ Error de conexión con Simple SMS Gateway: {e}, intentando otros formatos...")
+                        sys.stdout.flush()
+                        
+                        # Formato genérico para otras apps SMS Gateway (respaldo)
+                        param_variations = [
+                            {'phone': phone_clean, 'message': message},
+                            {'number': phone_clean, 'message': message},
+                            {'to': phone_clean, 'message': message},
+                        ]
+                        
+                        url_variations = [
+                            f"{base_url}/send",
+                            f"{base_url}/api/send",
+                            f"{base_url}/sms/send",
+                        ]
+                        
+                        success = False
+                        last_error = str(e)
+                        
+                        for url in url_variations:
+                            if success:
+                                break
+                                
+                            for params in param_variations:
+                                if success:
+                                    break
+                                
+                                try:
+                                    headers = {'Content-Type': 'application/json'}
+                                    print(f"   - Probando respaldo: POST {url} con params={list(params.keys())}")
+                                    sys.stdout.flush()
+                                    
+                                    response = requests.post(url, json=params, headers=headers, timeout=15)
+                                    
+                                    if response.status_code == 200:
+                                        print(f"   - ✅ Éxito con formato respaldo: {url}")
+                                        success = True
+                                        break
+                                except Exception as backup_error:
+                                    last_error = str(backup_error)
+                                    continue
+                        
+                        if not success:
+                            raise Exception(f"No se pudo conectar con Simple SMS Gateway ni otros formatos. Último error: {last_error}")
+                    
+                    sys.stdout.flush()
+                
+                print(f"   - Respuesta HTTP: {response.status_code}")
+                print(f"   - Respuesta: {response.text[:200]}")
+                sys.stdout.flush()
                 
                 if response.status_code == 200:
-                    result_data = response.json() if response.text else {}
+                    try:
+                        result_data = response.json() if response.text else {}
+                    except:
+                        result_data = {'response': response.text}
+                    
+                    print(f"✅ Android SMS Gateway exitoso!")
+                    sys.stdout.flush()
                     return {
                         'success': True,
                         'method': 'android_phone_gateway',
                         'to': phone_number,
-                        'message': 'SMS enviado exitosamente vía Android Gateway',
+                        'message': 'SMS enviado exitosamente vía Android SMS Gateway',
                         'gateway_response': result_data
                     }
                 else:
-                    print(f"Error en SMS Gateway: {response.status_code} - {response.text}")
+                    error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
+                    print(f"⚠ Android SMS Gateway falló: {error_msg}")
+                    sys.stdout.flush()
             except Exception as e:
-                print(f"Error con SMS Gateway API local: {e}, intentando método ADB...")
+                print(f"⚠ Error con Android SMS Gateway: {e}, intentando método ADB...")
+                import traceback
+                print(traceback.format_exc())
+                sys.stdout.flush()
         
         # MÉTODO 3: ADB (semi-automático - abre app de SMS)
         try:
@@ -537,6 +657,7 @@ def create_sms_sender(method='auto') -> Optional[FreeSMSSender]:
     if sender.is_available():
         return sender
     return None
+
 
 
 
